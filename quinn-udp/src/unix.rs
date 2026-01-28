@@ -55,9 +55,9 @@ type IpTosTy = libc::c_uchar;
 #[cfg(not(any(target_os = "freebsd", target_os = "netbsd")))]
 type IpTosTy = libc::c_int;
 
-/// Tokio-compatible UDP socket with some useful specializations.
+/// UDP socket with some useful specializations.
 ///
-/// Unlike a standard tokio UDP socket, this allows ECN bits to be read and written on some
+/// Unlike a standard UDP socket, this allows ECN bits to be read and written on some
 /// platforms.
 #[derive(Debug)]
 pub struct UdpSocketState {

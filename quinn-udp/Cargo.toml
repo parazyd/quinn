@@ -1,5 +1,5 @@
 [package]
-name = "quinn-udp"
+name = "quinn-udp-smol"
 version = "0.6.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -32,8 +32,9 @@ socket2 = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
-criterion = { version = "0.8", default-features = false, features = ["async_tokio"] }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net"] }
+async-io = { workspace = true }
+criterion = { version = "0.8", default-features = false, features = ["async_smol"] }
+smol = { workspace = true }
 
 [build-dependencies]
 cfg_aliases = { workspace = true }
