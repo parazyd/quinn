@@ -6,11 +6,12 @@ use std::{
     time::Duration,
 };
 
+use quinn_smol as quinn;
+
 use crc::Crc;
 use quinn::{ConnectionError, ReadError, StoppedError, TransportConfig, WriteError};
 use rand::{self, RngCore};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
-use tokio::runtime::Builder;
 
 struct Shared {
     errors: Vec<ConnectionError>,
@@ -24,8 +25,6 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
         .with_test_writer()
         .try_init();
 
-    let runtime = Builder::new_current_thread().enable_all().build().unwrap();
-    let _guard = runtime.enter();
     let shared = Arc::new(Mutex::new(Shared { errors: vec![] }));
 
     let (cfg, listener_cert) = configure_listener();
@@ -50,14 +49,15 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
                 }
                 Ok(())
             };
-            tokio::spawn(async move {
+            smol::spawn(async move {
                 if let Err(e) = task.await {
                     shared.lock().unwrap().errors.push(e);
                 }
-            });
+            })
+            .detach();
         }
     };
-    runtime.spawn(read_incoming_data);
+    smol::spawn(read_incoming_data).detach();
 
     let client_cfg = configure_connector(listener_cert);
 
@@ -72,7 +72,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
             write_to_peer(conn, data).await?;
             Ok(())
         };
-        runtime.spawn(async move {
+        smol::spawn(async move {
             if let Err(e) = task.await {
                 use quinn::ConnectionError::*;
                 match e {
@@ -82,10 +82,11 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
                     _ => panic!("unexpected write error"),
                 }
             }
-        });
+        })
+        .detach();
     }
 
-    runtime.block_on(endpoint.wait_idle());
+    smol::block_on(endpoint.wait_idle());
     let shared = shared.lock().unwrap();
     if !shared.errors.is_empty() {
         panic!("some connections failed: {:?}", shared.errors);

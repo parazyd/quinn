@@ -16,28 +16,26 @@ default = ["json-output", "qlog"]
 # Allow for json output from the perf client
 json-output = ["serde", "serde_json"]
 # Enable qlog support
-qlog = ["quinn/qlog"]
-# Enable tokio-console https://github.com/tokio-rs/console
-# See https://docs.rs/console-subscriber/latest/console_subscriber/struct.Builder.html#method.with_default_env
-#    for useful environment variables in particular to change listen addr and port
-# WARNING: it requires special compilation flags
-#    RUSTFLAGS="--cfg tokio_unstable" cargo build -r -p perf -F tokio-console
-tokio-console = ["console-subscriber"]
+qlog = ["quinn-smol/qlog"]
 
 [dependencies]
 anyhow = { workspace = true }
+async-io = { workspace = true }
+async-lock = { workspace = true }
+async-signal = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true }
-console-subscriber = { version = "0.5.0", features = ["parking_lot"], optional = true }
+futures = { workspace = true }
 hdrhistogram = { workspace = true }
-quinn = { path = "../quinn" }
-quinn-proto = { path = "../quinn-proto" }
+quinn-smol = { path = "../quinn" }
+quinn-proto-smol = { path = "../quinn-proto" }
 rcgen = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true, optional = true  }
 serde_json = { workspace = true, optional = true }
+smol = { workspace = true }
+smol-macros = { workspace = true }
 socket2 = { workspace = true }
-tokio = { workspace = true, features = ["rt", "macros", "signal", "net"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 

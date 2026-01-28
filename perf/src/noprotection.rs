@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use bytes::BytesMut;
 
-use quinn_proto::{
+use quinn_smol as quinn;
+
+use quinn_proto_smol::{
     ConnectionId, Side, TransportError,
     crypto::{
         self, CryptoError,

@@ -1,3 +1,5 @@
+use quinn_smol as quinn;
+
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket},
     sync::Arc,
@@ -6,11 +8,10 @@ use std::{
 
 use bencher::{Bencher, benchmark_group, benchmark_main};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
-use tokio::runtime::{Builder, Runtime};
 use tracing::error_span;
 use tracing_futures::Instrument as _;
 
-use quinn::{Endpoint, TokioRuntime};
+use quinn::{Endpoint, SmolRuntime};
 
 benchmark_group!(
     benches,
@@ -42,7 +43,7 @@ fn send_data(bench: &mut Bencher, data: &'static [u8], concurrent_streams: usize
 
     let ctx = Context::new();
     let (addr, thread) = ctx.spawn_server();
-    let (endpoint, client, runtime) = ctx.make_client(addr);
+    let (endpoint, client) = ctx.make_client(addr);
     let client = Arc::new(client);
 
     bench.bytes = (data.len() as u64) * (concurrent_streams as u64);
@@ -51,7 +52,7 @@ fn send_data(bench: &mut Bencher, data: &'static [u8], concurrent_streams: usize
 
         for _ in 0..concurrent_streams {
             let client = client.clone();
-            handles.push(runtime.spawn(async move {
+            handles.push(smol::spawn(async move {
                 let mut stream = client.open_uni().await.unwrap();
                 stream.write_all(data).await.unwrap();
                 stream.finish().unwrap();
@@ -60,14 +61,14 @@ fn send_data(bench: &mut Bencher, data: &'static [u8], concurrent_streams: usize
             }));
         }
 
-        runtime.block_on(async {
+        smol::block_on(async {
             for handle in handles {
-                handle.await.unwrap();
+                handle.await;
             }
         });
     });
     drop(client);
-    runtime.block_on(endpoint.wait_idle());
+    smol::block_on(endpoint.wait_idle());
     thread.join().unwrap()
 }
 
@@ -101,18 +102,15 @@ impl Context {
         let addr = sock.local_addr().unwrap();
         let config = self.server_config.clone();
         let handle = thread::spawn(move || {
-            let runtime = rt();
-            let endpoint = {
-                let _guard = runtime.enter();
-                Endpoint::new(
-                    Default::default(),
-                    Some(config),
-                    sock,
-                    Arc::new(TokioRuntime),
-                )
-                .unwrap()
-            };
-            let handle = runtime.spawn(
+            let endpoint = Endpoint::new(
+                Default::default(),
+                Some(config),
+                sock,
+                Arc::new(SmolRuntime),
+            )
+            .unwrap();
+
+            smol::block_on(
                 async move {
                     let connection = endpoint
                         .accept()
@@ -122,19 +120,19 @@ impl Context {
                         .expect("connect");
 
                     while let Ok(mut stream) = connection.accept_uni().await {
-                        tokio::spawn(async move {
+                        smol::spawn(async move {
                             while stream
                                 .read_chunk(usize::MAX, false)
                                 .await
                                 .unwrap()
                                 .is_some()
                             {}
-                        });
+                        })
+                        .detach();
                     }
                 }
                 .instrument(error_span!("server")),
             );
-            runtime.block_on(handle).unwrap();
         });
         (addr, handle)
     }
@@ -142,27 +140,19 @@ impl Context {
     pub(crate) fn make_client(
         &self,
         server_addr: SocketAddr,
-    ) -> (quinn::Endpoint, quinn::Connection, Runtime) {
-        let runtime = rt();
-        let endpoint = {
-            let _guard = runtime.enter();
-            Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap()
-        };
-        let connection = runtime
-            .block_on(async {
-                endpoint
-                    .connect_with(self.client_config.clone(), server_addr, "localhost")
-                    .unwrap()
-                    .instrument(error_span!("client"))
-                    .await
-            })
-            .unwrap();
-        (endpoint, connection, runtime)
+    ) -> (quinn::Endpoint, quinn::Connection) {
+        let endpoint =
+            Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap();
+        let connection = smol::block_on(async {
+            endpoint
+                .connect_with(self.client_config.clone(), server_addr, "localhost")
+                .unwrap()
+                .instrument(error_span!("client"))
+                .await
+        })
+        .unwrap();
+        (endpoint, connection)
     }
-}
-
-fn rt() -> Runtime {
-    Builder::new_current_thread().enable_all().build().unwrap()
 }
 
 const LARGE_DATA: &[u8] = &[0xAB; 1024 * 1024];

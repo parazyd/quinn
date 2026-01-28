@@ -1,16 +1,15 @@
 use clap::{Parser, Subcommand};
+use smol_macros::main;
 use tracing::error;
 use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use perf::{client, server};
 
-#[tokio::main(flavor = "current_thread")]
+main! {
 async fn main() {
     let opt = Cli::parse();
 
     let registry = tracing_subscriber::registry();
-    #[cfg(feature = "tokio-console")]
-    let registry = registry.with(console_subscriber::spawn());
     registry
         .with(
             fmt::layer().with_filter(
@@ -28,6 +27,7 @@ async fn main() {
     if let Err(e) = r {
         error!("{:#}", e);
     }
+}
 }
 
 #[derive(Parser)]

@@ -16,7 +16,7 @@ use std::{
 
 #[cfg(all(
     not(wasm_browser),
-    any(feature = "runtime-tokio", feature = "runtime-smol"),
+    feature = "runtime-smol",
     any(feature = "aws-lc-rs", feature = "ring"),
 ))]
 use crate::runtime::default_runtime;
@@ -34,17 +34,20 @@ use proto::{
 use rustc_hash::FxHashMap;
 #[cfg(all(
     not(wasm_browser),
-    any(feature = "runtime-tokio", feature = "runtime-smol"),
+    feature = "runtime-smol",
     any(feature = "aws-lc-rs", feature = "ring"),
 ))]
 use socket2::{Domain, Protocol, Socket, Type};
-use tokio::sync::{Notify, futures::Notified, mpsc};
 use tracing::{Instrument, Span};
 use udp::{BATCH_SIZE, RecvMeta};
 
 use crate::{
     ConnectionEvent, EndpointConfig, IO_LOOP_BOUND, RECV_TIME_BOUND, VarInt,
-    connection::Connecting, incoming::Incoming, work_limiter::WorkLimiter,
+    connection::Connecting,
+    incoming::Incoming,
+    runtime::mpsc,
+    runtime::sync::{Notified, Notify},
+    work_limiter::WorkLimiter,
 };
 
 /// A QUIC endpoint.
@@ -72,14 +75,14 @@ impl Endpoint {
     /// address. For example:
     ///
     /// ```
-    /// quinn::Endpoint::client((std::net::Ipv6Addr::UNSPECIFIED, 0).into());
+    /// quinn_smol::Endpoint::client((std::net::Ipv6Addr::UNSPECIFIED, 0).into());
     /// ```
     ///
     /// Some environments may not allow creation of dual-stack sockets, in which case an IPv6
     /// client will only be able to connect to IPv6 servers. An IPv4 client is never dual-stack.
     #[cfg(all(
         not(wasm_browser),
-        any(feature = "runtime-tokio", feature = "runtime-smol"),
+        feature = "runtime-smol",
         any(feature = "aws-lc-rs", feature = "ring"), // `EndpointConfig::default()` is only available with these
     ))]
     pub fn client(addr: SocketAddr) -> io::Result<Self> {
@@ -113,7 +116,7 @@ impl Endpoint {
     /// communicate within.
     #[cfg(all(
         not(wasm_browser),
-        any(feature = "runtime-tokio", feature = "runtime-smol"),
+        feature = "runtime-smol",
         any(feature = "aws-lc-rs", feature = "ring"), // `EndpointConfig::default()` is only available with these
     ))]
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {

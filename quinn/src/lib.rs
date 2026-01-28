@@ -50,6 +50,10 @@ mod runtime;
 mod send_stream;
 mod work_limiter;
 
+/// A wrapper around a byte buffer that is incrementally filled
+pub mod readbuf;
+pub use readbuf::ReadBuf;
+
 #[cfg(not(wasm_browser))]
 pub(crate) use std::time::{Duration, Instant};
 #[cfg(wasm_browser)]
@@ -81,9 +85,7 @@ pub use crate::incoming::{Incoming, IncomingFuture, RetryError};
 pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError};
 #[cfg(feature = "runtime-smol")]
 pub use crate::runtime::SmolRuntime;
-#[cfg(feature = "runtime-tokio")]
-pub use crate::runtime::TokioRuntime;
-#[cfg(any(feature = "runtime-tokio", feature = "runtime-smol"))]
+#[cfg(feature = "runtime-smol")]
 pub use crate::runtime::default_runtime;
 pub use crate::runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpSender};
 pub use crate::send_stream::{SendStream, StoppedError, WriteError};

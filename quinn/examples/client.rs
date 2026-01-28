@@ -2,6 +2,8 @@
 //!
 //! Checkout the `README.md` for guidance.
 
+use quinn_smol as quinn;
+
 use std::{
     fs,
     io::{self, Write},
@@ -15,6 +17,7 @@ use anyhow::{Result, anyhow};
 use clap::Parser;
 use proto::crypto::rustls::QuicClientConfig;
 use rustls::pki_types::CertificateDer;
+use smol_macros::main;
 use tracing::{error, info};
 use url::Url;
 
@@ -47,7 +50,8 @@ struct Opt {
     bind: SocketAddr,
 }
 
-fn main() {
+main! {
+async fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -56,7 +60,7 @@ fn main() {
     .unwrap();
     let opt = Opt::parse();
     let code = {
-        if let Err(e) = run(opt) {
+        if let Err(e) = run(opt).await {
             eprintln!("ERROR: {e}");
             1
         } else {
@@ -65,8 +69,8 @@ fn main() {
     };
     ::std::process::exit(code);
 }
+}
 
-#[tokio::main]
 async fn run(options: Opt) -> Result<()> {
     let url = options.url;
     let url_host = strip_ipv6_brackets(url.host_str().unwrap());

@@ -7,16 +7,18 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
 
+use smol_macros::main;
+
 mod common;
 use common::{make_client_endpoint, make_server_endpoint};
 
-#[tokio::main]
+main! {
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5000);
     let (endpoint, server_cert) = make_server_endpoint(server_addr)?;
     // accept a single connection
     let endpoint2 = endpoint.clone();
-    tokio::spawn(async move {
+    smol::spawn(async move {
         let incoming_conn = endpoint2.accept().await.unwrap();
         let conn = incoming_conn.await.unwrap();
         println!(
@@ -24,7 +26,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
             conn.remote_address()
         );
         // Dropping all handles associated with a connection implicitly closes it
-    });
+    })
+    .detach();
 
     let endpoint = make_client_endpoint("0.0.0.0:0".parse().unwrap(), &[&server_cert])?;
     // connect to server
@@ -42,4 +45,5 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     endpoint.wait_idle().await;
 
     Ok(())
+}
 }

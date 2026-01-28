@@ -1,4 +1,4 @@
-use quinn::{Endpoint, ServerConfig};
+use quinn_smol::{Endpoint, ServerConfig};
 use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 

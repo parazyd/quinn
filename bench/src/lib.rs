@@ -6,6 +6,8 @@ use std::{
     sync::Arc,
 };
 
+use quinn_smol as quinn;
+
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
@@ -14,7 +16,6 @@ use rustls::{
     RootCertStore,
     pki_types::{CertificateDer, PrivateKeyDer},
 };
-use tokio::runtime::{Builder, Runtime};
 use tracing::trace;
 
 pub mod stats;
@@ -30,7 +31,6 @@ pub fn configure_tracing_subscriber() {
 
 /// Creates a server endpoint which runs on the given runtime
 pub fn server_endpoint(
-    rt: &tokio::runtime::Runtime,
     cert: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
     opt: &Opt,
@@ -39,14 +39,12 @@ pub fn server_endpoint(
     let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key).unwrap();
     server_config.transport = Arc::new(transport_config(opt));
 
-    let endpoint = {
-        let _guard = rt.enter();
-        quinn::Endpoint::server(
-            server_config,
-            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
-        )
-        .unwrap()
-    };
+    let endpoint = quinn::Endpoint::server(
+        server_config,
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
+    )
+    .unwrap();
+
     let server_addr = endpoint.local_addr().unwrap();
     (server_addr, endpoint)
 }
@@ -143,10 +141,6 @@ pub async fn send_data_on_stream(stream: &mut quinn::SendStream, stream_size: u6
     _ = stream.stopped().await;
 
     Ok(())
-}
-
-pub fn rt() -> Runtime {
-    Builder::new_current_thread().enable_all().build().unwrap()
 }
 
 pub fn transport_config(opt: &Opt) -> quinn::TransportConfig {

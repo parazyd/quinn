@@ -2,6 +2,8 @@
 use std::{fs::File, io::BufWriter, path::PathBuf};
 use std::{io, net::SocketAddr, num::ParseIntError, str::FromStr, sync::Arc, time::Duration};
 
+use quinn_smol as quinn;
+
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 #[cfg(feature = "qlog")]

@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use quinn::Connection;
+use quinn_smol::Connection;
 
 fn main() {}
 

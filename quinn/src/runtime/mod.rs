@@ -1,4 +1,4 @@
-#[cfg(any(feature = "runtime-tokio", feature = "runtime-smol"))]
+#[cfg(feature = "runtime-smol")]
 use std::sync::Arc;
 use std::{
     fmt::{self, Debug},
@@ -10,6 +10,10 @@ use std::{
 };
 
 use udp::{RecvMeta, Transmit};
+
+pub(super) mod mpsc;
+pub(super) mod oneshot;
+pub(super) mod sync;
 
 use crate::Instant;
 
@@ -141,7 +145,7 @@ impl<Socket, MakeWritableFutFn, WriteableFut>
     /// that resolves once the socket is write-ready.
     ///
     /// See also the bounds on this struct's [`UdpSender`] implementation.
-    #[cfg(any(feature = "runtime-smol", feature = "runtime-tokio",))]
+    #[cfg(feature = "runtime-smol")]
     fn new(inner: Socket, make_fut: MakeWritableFutFn) -> Self {
         Self {
             socket: inner,
@@ -215,34 +219,11 @@ trait UdpSenderHelperSocket: Send + Sync + 'static {
     fn max_transmit_segments(&self) -> usize;
 }
 
-/// Automatically select an appropriate runtime from those enabled at compile time
-///
-/// If `runtime-tokio` is enabled and this function is called from within a Tokio runtime context,
-/// then `TokioRuntime` is returned. Otherwise, if `runtime-smol` is enabled, `SmolRuntime` is
-/// returned. Otherwise, `None` is returned.
-#[cfg(any(feature = "runtime-tokio", feature = "runtime-smol"))]
-#[allow(clippy::needless_return)] // Be sure we return the right thing
+/// Return the default async runtime.
+#[cfg(feature = "runtime-smol")]
 pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
-    #[cfg(feature = "runtime-tokio")]
-    {
-        if ::tokio::runtime::Handle::try_current().is_ok() {
-            return Some(Arc::new(TokioRuntime));
-        }
-    }
-
-    #[cfg(feature = "runtime-smol")]
-    {
-        return Some(Arc::new(SmolRuntime));
-    }
-
-    #[cfg(not(feature = "runtime-smol"))]
-    None
+    Some(Arc::new(SmolRuntime))
 }
-
-#[cfg(feature = "runtime-tokio")]
-mod tokio;
-#[cfg(feature = "runtime-tokio")]
-pub use tokio::TokioRuntime;
 
 #[cfg(feature = "runtime-smol")]
 mod smol;

@@ -1,5 +1,7 @@
 use std::{error::Error, sync::Arc};
 
+use quinn_smol as quinn;
+
 use quinn::{
     ClientConfig,
     crypto::rustls::{NoInitialCipherSuite, QuicClientConfig},

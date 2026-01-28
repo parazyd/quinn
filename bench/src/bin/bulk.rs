@@ -4,14 +4,16 @@ use std::{
     time::Instant,
 };
 
+use quinn_smol as quinn;
+
 use anyhow::{Context, Result};
+use async_lock::Semaphore;
 use clap::Parser;
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
-use tokio::sync::Semaphore;
 use tracing::{info, trace};
 
 use bench::{
-    Opt, configure_tracing_subscriber, connect_client, drain_stream, rt, send_data_on_stream,
+    Opt, configure_tracing_subscriber, connect_client, drain_stream, send_data_on_stream,
     server_endpoint,
     stats::{Stats, TransferResult},
 };
@@ -25,15 +27,14 @@ fn main() {
     let cert = CertificateDer::from(cert.cert);
 
     let server_span = tracing::error_span!("server");
-    let runtime = rt();
     let (server_addr, endpoint) = {
         let _guard = server_span.enter();
-        server_endpoint(&runtime, cert.clone(), key.into(), &opt)
+        server_endpoint(cert.clone(), key.into(), &opt)
     };
 
     let server_thread = std::thread::spawn(move || {
         let _guard = server_span.entered();
-        if let Err(e) = runtime.block_on(server(endpoint, opt)) {
+        if let Err(e) = smol::block_on(server(endpoint, opt)) {
             eprintln!("server failed: {e:#}");
         }
     });
@@ -43,8 +44,7 @@ fn main() {
         let cert = cert.clone();
         handles.push(std::thread::spawn(move || {
             let _guard = tracing::error_span!("client", id).entered();
-            let runtime = rt();
-            match runtime.block_on(client(server_addr, cert, opt)) {
+            match smol::block_on(client(server_addr, cert, opt)) {
                 Ok(stats) => Ok(stats),
                 Err(e) => {
                     eprintln!("client failed: {e:#}");
@@ -73,7 +73,7 @@ async fn server(endpoint: quinn::Endpoint, opt: Opt) -> Result<()> {
         let handshake = endpoint.accept().await.unwrap();
         let connection = handshake.await.context("handshake failed")?;
 
-        server_tasks.push(tokio::spawn(async move {
+        server_tasks.push(smol::spawn(async move {
             loop {
                 let (mut send_stream, mut recv_stream) = match connection.accept_bi().await {
                     Err(quinn::ConnectionError::ApplicationClosed(_)) => break,
@@ -85,11 +85,12 @@ async fn server(endpoint: quinn::Endpoint, opt: Opt) -> Result<()> {
                 };
                 trace!("stream established");
 
-                tokio::spawn(async move {
+                smol::spawn(async move {
                     drain_stream(&mut recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
                     Ok::<_, anyhow::Error>(())
-                });
+                })
+                .detach();
             }
 
             if opt.stats {
@@ -101,9 +102,7 @@ async fn server(endpoint: quinn::Endpoint, opt: Opt) -> Result<()> {
     // Await all the tasks. We have to do this to prevent the runtime getting dropped
     // and all server tasks to be cancelled
     for handle in server_tasks {
-        if let Err(e) = handle.await {
-            eprintln!("Server task error: {e:?}");
-        };
+        handle.await;
     }
 
     Ok(())
@@ -126,20 +125,23 @@ async fn client(
     let sem = Arc::new(Semaphore::new(opt.max_streams));
     let results = Arc::new(Mutex::new(Vec::new()));
     for _ in 0..opt.streams {
-        let permit = sem.clone().acquire_owned().await.unwrap();
+        let permit = sem.clone().acquire_arc().await;
         let results = results.clone();
         let connection = connection.clone();
-        tokio::spawn(async move {
+        smol::spawn(async move {
             let result =
                 handle_client_stream(connection, opt.upload_size, opt.read_unordered).await;
             info!("stream finished: {:?}", result);
             results.lock().unwrap().push(result);
             drop(permit);
-        });
+        })
+        .detach();
     }
 
     // Wait for remaining streams to finish
-    let _ = sem.acquire_many(opt.max_streams as u32).await.unwrap();
+    for _ in 0..opt.max_streams {
+        let _ = sem.acquire_arc().await;
+    }
 
     for result in results.lock().unwrap().drain(..) {
         match result {

@@ -1,5 +1,5 @@
 [package]
-name = "quinn"
+name = "quinn-smol"
 version = "0.12.0"
 license.workspace = true
 repository.workspace = true
@@ -15,7 +15,7 @@ rust-version.workspace = true
 [features]
 # NOTE: Please keep this in sync with the feature list in `.github/workflows/codecov.yml`, see
 # comment in that file for more information.
-default = ["tracing-log", "platform-verifier", "runtime-tokio", "rustls-ring", "bloom"]
+default = ["tracing-log", "platform-verifier", "runtime-smol", "rustls-ring", "bloom"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
 aws-lc-rs = ["proto/aws-lc-rs"]
 aws-lc-rs-fips = ["proto/aws-lc-rs-fips"]
@@ -35,8 +35,7 @@ rustls-ring = ["dep:rustls", "ring", "proto/rustls-ring", "proto/ring"]
 # Enable the `ring` crypto provider.
 # Outside wasm*-unknown-unknown targets, this enables `Endpoint::client` and `Endpoint::server` conveniences.
 ring = ["proto/ring"]
-runtime-tokio = ["tokio/time", "tokio/rt", "tokio/net"]
-runtime-smol = ["dep:async-io", "dep:smol"]
+runtime-smol = ["dep:async-io", "dep:smol", "futures-io"]
 
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 tracing-log = ["tracing/log", "proto/tracing-log", "udp/tracing-log"]
@@ -51,19 +50,19 @@ qlog = ["proto/qlog"]
 __rustls-post-quantum-test =  ["rustls/prefer-post-quantum", "rustls-aws-lc-rs", "proto/__rustls-post-quantum-test"]
 
 [dependencies]
+async-channel = { workspace = true }
 async-io = { workspace = true, optional = true }
 bytes = { workspace = true }
-# Enables futures::io::{AsyncRead, AsyncWrite} support for streams
+event-listener = { workspace = true }
 futures-io = { workspace = true, optional = true }
 rustc-hash = { workspace = true }
 pin-project-lite = { workspace = true }
-proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.12.0", default-features = false }
+proto = { package = "quinn-proto-smol", path = "../quinn-proto", version = "0.12.0", default-features = false }
 rustls = { workspace = true, optional = true }
 smol = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tracing =  { workspace = true }
-tokio = { workspace = true }
-udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.6", default-features = false, features = ["tracing"] }
+udp = { package = "quinn-udp-smol", path = "../quinn-udp", version = "0.6", default-features = false, features = ["tracing"] }
 
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 socket2 = { workspace = true }
@@ -76,10 +75,12 @@ anyhow = { workspace = true }
 crc = { workspace = true }
 bencher = { workspace = true }
 directories-next = { workspace = true }
+futures = { workspace = true }
 rand = { workspace = true }
 rcgen = { workspace = true }
 clap = { workspace = true }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time", "macros"] }
+smol = { workspace = true }
+smol-macros = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-futures = { workspace = true }
 url = { workspace = true }
@@ -121,4 +122,4 @@ required-features = ["rustls-ring"]
 
 [package.metadata.docs.rs]
 # all non-default features except fips (cannot build on docs.rs environment)
-features = ["lock_tracking", "rustls-aws-lc-rs", "rustls-ring", "runtime-tokio", "runtime-smol", "tracing-log", "rustls-log"]
+features = ["lock_tracking", "rustls-aws-lc-rs", "rustls-ring", "runtime-smol", "tracing-log", "rustls-log"]

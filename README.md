@@ -10,8 +10,9 @@ The project was founded by [Dirkjan Ochtman](https://github.com/djc) and
 [Benjamin Saunders](https://github.com/Ralith) as a side project in 2018, and has seen more than
 30 releases since then.
 
-This repository is a fork that removes Tokio support and defaults to the
-[smol](https://github.com/smol-rs/smol) async runtime.
+This repository is a fork that defaults to the
+[`smol`](https://github.com/smol-rs/smol) async runtime without requiring any
+`T***o` dependencies.
 
 ## Features
 
@@ -26,7 +27,7 @@ This repository is a fork that removes Tokio support and defaults to the
 
 ## Overview
 
-- **quinn:** High-level async API based on tokio, see [examples][examples] for usage. This will be used by most developers. (Basic benchmarks are included.)
+- **quinn:** High-level async API based on smol, see [examples][examples] for usage. This will be used by most developers. (Basic benchmarks are included.)
 - **quinn-proto:** Deterministic state machine of the protocol which performs [**no** I/O][sans-io] internally and is suitable for use with custom event loops (and potentially a C or C++ API).
 - **quinn-udp:** UDP sockets with ECN information tuned for the protocol.
 - **bench:** Benchmarks without any framework.

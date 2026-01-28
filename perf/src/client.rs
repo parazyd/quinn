@@ -1,17 +1,21 @@
 #[cfg(feature = "json-output")]
 use std::path::PathBuf;
 use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs},
     sync::Arc,
     time::{Duration, Instant},
 };
 
+use quinn_smol as quinn;
+
 use anyhow::{Context, Result};
+use async_io::Timer;
+use async_lock::Semaphore;
 use bytes::Bytes;
 use clap::Parser;
-use quinn::{TokioRuntime, crypto::rustls::QuicClientConfig};
+use futures::{FutureExt, select};
+use quinn::{SmolRuntime, crypto::rustls::QuicClientConfig};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -75,11 +79,16 @@ pub async fn run(opt: Opt) -> Result<()> {
         .map_or(Ok(443), |x| x.parse())
         .context("parsing port")?;
     let addr = match opt.ip {
-        None => tokio::net::lookup_host(&opt.host)
-            .await
-            .context("resolving host")?
-            .next()
-            .unwrap(),
+        None => {
+            let host = opt.host.clone();
+            smol::unblock(move || {
+                host.to_socket_addrs()
+                    .context("resolving host")?
+                    .next()
+                    .context("no addresses found")
+            })
+            .await?
+        }
         Some(ip) => SocketAddr::new(ip, host_port),
     };
 
@@ -101,7 +110,7 @@ pub async fn run(opt: Opt) -> Result<()> {
     let mut endpoint_cfg = quinn::EndpointConfig::default();
     endpoint_cfg.max_udp_payload_size(opt.common.max_udp_payload_size)?;
 
-    let endpoint = quinn::Endpoint::new(endpoint_cfg, None, socket, Arc::new(TokioRuntime))?;
+    let endpoint = quinn::Endpoint::new(endpoint_cfg, None, socket, Arc::new(SmolRuntime))?;
 
     let default_provider = rustls::crypto::ring::default_provider();
     let provider = Arc::new(rustls::crypto::CryptoProvider {
@@ -143,7 +152,7 @@ pub async fn run(opt: Opt) -> Result<()> {
     info!("established");
 
     let drive_fut = async {
-        tokio::try_join!(
+        futures::try_join!(
             drive_uni(
                 connection.clone(),
                 stream_stats.clone(),
@@ -168,7 +177,7 @@ pub async fn run(opt: Opt) -> Result<()> {
 
         loop {
             let start = Instant::now();
-            tokio::time::sleep(interval_duration).await;
+            Timer::after(interval_duration).await;
             {
                 stats.on_interval(start, &stream_stats);
 
@@ -180,15 +189,31 @@ pub async fn run(opt: Opt) -> Result<()> {
         }
     };
 
-    tokio::select! {
-        _ = drive_fut => {}
-        _ = stats_fut => {}
-        _ = tokio::signal::ctrl_c() => {
+    let ctrl_c_fut = async {
+        #[cfg(unix)]
+        {
+            use async_signal::{Signal, Signals};
+            use futures::StreamExt;
+            let mut signals = Signals::new([Signal::Int, Signal::Term]).unwrap();
+            signals.next().await;
+        }
+        #[cfg(not(unix))]
+        {
+            // On non-Unix platforms, just wait forever (duration timeout will handle shutdown)
+            std::future::pending::<()>().await;
+        }
+    };
+
+    let connection_clone = connection.clone();
+    select! {
+        _ = drive_fut.fuse() => {}
+        _ = stats_fut.fuse() => {}
+        _ = ctrl_c_fut.fuse() => {
             info!("shutting down");
-            connection.close(0u32.into(), b"interrupted");
+            connection_clone.close(0u32.into(), b"interrupted");
         }
         // Add a small duration so the final interval can be reported
-        _ = tokio::time::sleep(Duration::from_secs(opt.duration) + Duration::from_millis(200)) => {
+        _ = Timer::after(Duration::from_secs(opt.duration) + Duration::from_millis(200)).fuse() => {
             info!("shutting down");
             connection.close(0u32.into(), b"done");
         }
@@ -261,19 +286,20 @@ async fn drive_uni(
     let sem = Arc::new(Semaphore::new(concurrency as usize));
 
     loop {
-        let permit = sem.clone().acquire_owned().await.unwrap();
+        let permit = sem.clone().acquire_arc().await;
         let send = connection.open_uni().await?;
         let stream_stats = stream_stats.clone();
 
         debug!("sending request on {}", send.id());
         let connection = connection.clone();
-        tokio::spawn(async move {
+        smol::spawn(async move {
             if let Err(e) = request_uni(send, connection, upload, download, stream_stats).await {
                 error!("sending request failed: {:#}", e);
             }
 
             drop(permit);
-        });
+        })
+        .detach();
     }
 }
 
@@ -337,18 +363,19 @@ async fn drive_bi(
     let sem = Arc::new(Semaphore::new(concurrency as usize));
 
     loop {
-        let permit = sem.clone().acquire_owned().await.unwrap();
+        let permit = sem.clone().acquire_arc().await;
         let (send, recv) = connection.open_bi().await?;
         let stream_stats = stream_stats.clone();
 
         debug!("sending request on {}", send.id());
-        tokio::spawn(async move {
+        smol::spawn(async move {
             if let Err(e) = request_bi(send, recv, upload, download, stream_stats).await {
                 error!("request failed: {:#}", e);
             }
 
             drop(permit);
-        });
+        })
+        .detach();
     }
 }
 

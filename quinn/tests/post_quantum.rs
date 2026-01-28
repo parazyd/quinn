@@ -6,10 +6,13 @@ use std::{
     sync::Arc,
 };
 
+use quinn_smol as quinn;
+
 use rustls::{
     NamedGroup,
     pki_types::{CertificateDer, PrivatePkcs8KeyDer},
 };
+use smol_macros::test;
 use tracing::info;
 
 use quinn::{
@@ -17,14 +20,16 @@ use quinn::{
     crypto::rustls::{HandshakeData, QuicClientConfig, QuicServerConfig},
 };
 
-#[tokio::test]
+test! {
 async fn post_quantum_key_worst_case_header() {
     check_post_quantum_key_exchange(1274).await;
 }
+}
 
-#[tokio::test]
+test! {
 async fn post_quantum_key_exchange_large_mtu() {
     check_post_quantum_key_exchange(1433).await;
+}
 }
 
 async fn check_post_quantum_key_exchange(min_mtu: u16) {
@@ -38,7 +43,7 @@ async fn check_post_quantum_key_exchange(min_mtu: u16) {
     let (endpoint, server_cert) = make_server_endpoint(server_addr, min_mtu).unwrap();
     let server_addr = endpoint.local_addr().unwrap();
     // accept a single connection
-    let jh = tokio::spawn(async move {
+    let jh = smol::spawn(async move {
         let incoming_conn = endpoint.accept().await.unwrap();
         let conn = incoming_conn.await.unwrap();
         info!(
@@ -70,7 +75,7 @@ async fn check_post_quantum_key_exchange(min_mtu: u16) {
 
     // Make sure the server has a chance to clean up
     endpoint.wait_idle().await;
-    jh.await.unwrap();
+    jh.await;
 }
 
 fn make_client_endpoint(

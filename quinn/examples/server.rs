@@ -2,6 +2,8 @@
 //!
 //! Checkout the `README.md` for guidance.
 
+use quinn_smol as quinn;
+
 use std::{
     ascii, fs, io,
     net::SocketAddr,
@@ -14,6 +16,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use proto::crypto::rustls::QuicServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, pem::PemObject};
+use smol_macros::main;
 use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
 
@@ -47,7 +50,8 @@ struct Opt {
     connection_limit: Option<usize>,
 }
 
-fn main() {
+main! {
+async fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -56,7 +60,7 @@ fn main() {
     .unwrap();
     let opt = Opt::parse();
     let code = {
-        if let Err(e) = run(opt) {
+        if let Err(e) = run(opt).await {
             eprintln!("ERROR: {e}");
             1
         } else {
@@ -65,8 +69,8 @@ fn main() {
     };
     ::std::process::exit(code);
 }
+}
 
-#[tokio::main]
 async fn run(options: Opt) -> Result<()> {
     let (certs, key) = if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
         let key = if key_path.extension().is_some_and(|x| x == "der") {
@@ -156,11 +160,12 @@ async fn run(options: Opt) -> Result<()> {
         } else {
             info!("accepting connection");
             let fut = handle_connection(root.clone(), conn);
-            tokio::spawn(async move {
+            smol::spawn(async move {
                 if let Err(e) = fut.await {
                     error!("connection failed: {reason}", reason = e.to_string())
                 }
-            });
+            })
+            .detach();
         }
     }
 
@@ -196,14 +201,15 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Incoming) -> Result<()>
                 Ok(s) => s,
             };
             let fut = handle_request(root.clone(), stream);
-            tokio::spawn(
+            smol::spawn(
                 async move {
                     if let Err(e) = fut.await {
                         error!("failed: {reason}", reason = e.to_string());
                     }
                 }
                 .instrument(info_span!("request")),
-            );
+            )
+            .detach();
         }
     }
     .instrument(span)

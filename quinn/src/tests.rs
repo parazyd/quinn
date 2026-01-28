@@ -10,6 +10,7 @@ use std::{
     future::Future,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
+    pin::pin,
     str,
     sync::{
         Arc,
@@ -18,31 +19,38 @@ use std::{
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-use crate::runtime::TokioRuntime;
+use crate::runtime::SmolRuntime;
 use crate::{Duration, Instant};
+use async_io::Timer;
 use bytes::Bytes;
+use futures::FutureExt;
 use proto::{RandomConnectionIdGenerator, crypto::rustls::QuicClientConfig};
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use rustls::{
     RootCertStore,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
 };
-use tokio::runtime::{Builder, Runtime};
-use tokio::time::{sleep, timeout};
+use smol::future;
+use smol_macros::test;
 use tracing::{error_span, info};
 use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
 
 use super::{ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream, TransportConfig};
 
+async fn timeout<T>(duration: Duration, future: impl Future<Output = T>) -> Result<T, ()> {
+    let timeout_future = async {
+        Timer::after(duration).await;
+        Err(())
+    };
+    let task_future = async { Ok(future.await) };
+    future::or(timeout_future, task_future).await
+}
+
 #[test]
 fn handshake_timeout() {
     let _guard = subscribe();
-    let runtime = rt_threaded();
-    let client = {
-        let _guard = runtime.enter();
-        Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap()
-    };
+    let client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
 
     // Avoid NoRootAnchors error
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
@@ -58,7 +66,7 @@ fn handshake_timeout() {
     client_config.transport_config(Arc::new(transport_config));
 
     let start = Instant::now();
-    runtime.block_on(async move {
+    smol::block_on(async move {
         match client
             .connect_with(
                 client_config,
@@ -77,7 +85,7 @@ fn handshake_timeout() {
     assert!(dt > IDLE_TIMEOUT && dt < 2 * IDLE_TIMEOUT);
 }
 
-#[tokio::test]
+test! {
 async fn close_endpoint() {
     let _guard = subscribe();
 
@@ -97,9 +105,10 @@ async fn close_endpoint() {
         )
         .unwrap();
 
-    tokio::spawn(async move {
+    smol::spawn(async move {
         let _ = conn.await;
-    });
+    })
+    .detach();
 
     let conn = endpoint
         .connect(
@@ -116,16 +125,13 @@ async fn close_endpoint() {
         }
     }
 }
+}
 
 #[test]
 fn local_addr() {
     let socket = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
     let addr = socket.local_addr().unwrap();
-    let runtime = rt_basic();
-    let ep = {
-        let _guard = runtime.enter();
-        Endpoint::new(Default::default(), None, socket, Arc::new(TokioRuntime)).unwrap()
-    };
+    let ep = Endpoint::new(Default::default(), None, socket, Arc::new(SmolRuntime)).unwrap();
     assert_eq!(
         addr,
         ep.local_addr()
@@ -136,15 +142,11 @@ fn local_addr() {
 #[test]
 fn read_after_close() {
     let _guard = subscribe();
-    let runtime = rt_basic();
-    let endpoint = {
-        let _guard = runtime.enter();
-        endpoint()
-    };
+    let endpoint = endpoint();
 
     const MSG: &[u8] = b"goodbye!";
     let endpoint2 = endpoint.clone();
-    runtime.spawn(async move {
+    smol::spawn(async move {
         let new_conn = endpoint2
             .accept()
             .await
@@ -156,14 +158,15 @@ fn read_after_close() {
         s.finish().unwrap();
         // Wait for the stream to be closed, one way or another.
         _ = s.stopped().await;
-    });
-    runtime.block_on(async move {
+    })
+    .detach();
+    smol::block_on(async move {
         let new_conn = endpoint
             .connect(endpoint.local_addr().unwrap(), "localhost")
             .unwrap()
             .await
             .expect("connect");
-        sleep(Duration::from_millis(100)).await;
+        Timer::after(Duration::from_millis(100)).await;
         let mut stream = new_conn.accept_uni().await.expect("incoming streams");
         let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
         assert_eq!(msg, MSG);
@@ -173,36 +176,28 @@ fn read_after_close() {
 #[test]
 fn export_keying_material() {
     let _guard = subscribe();
-    let runtime = rt_basic();
-    let endpoint = {
-        let _guard = runtime.enter();
-        endpoint()
-    };
+    let endpoint = endpoint();
 
-    runtime.block_on(async move {
-        let outgoing_conn_fut = tokio::spawn({
-            let endpoint = endpoint.clone();
-            async move {
-                endpoint
-                    .connect(endpoint.local_addr().unwrap(), "localhost")
-                    .unwrap()
-                    .await
-                    .expect("connect")
-            }
+    smol::block_on(async move {
+        let endpoint_clone = endpoint.clone();
+        let outgoing_conn_fut = smol::spawn(async move {
+            endpoint_clone
+                .connect(endpoint_clone.local_addr().unwrap(), "localhost")
+                .unwrap()
+                .await
+                .expect("connect")
         });
-        let incoming_conn_fut = tokio::spawn({
-            let endpoint = endpoint.clone();
-            async move {
-                endpoint
-                    .accept()
-                    .await
-                    .expect("endpoint")
-                    .await
-                    .expect("connection")
-            }
+        let endpoint_clone = endpoint.clone();
+        let incoming_conn_fut = smol::spawn(async move {
+            endpoint_clone
+                .accept()
+                .await
+                .expect("endpoint")
+                .await
+                .expect("connection")
         });
-        let outgoing_conn = outgoing_conn_fut.await.unwrap();
-        let incoming_conn = incoming_conn_fut.await.unwrap();
+        let (outgoing_conn, incoming_conn) =
+            future::zip(outgoing_conn_fut, incoming_conn_fut).await;
         let mut i_buf = [0u8; 64];
         incoming_conn
             .export_keying_material(&mut i_buf, b"asdf", b"qwer")
@@ -215,7 +210,7 @@ fn export_keying_material() {
     });
 }
 
-#[tokio::test]
+test! {
 async fn ip_blocking() {
     let _guard = subscribe();
     let endpoint_factory = EndpointFactory::new();
@@ -224,7 +219,7 @@ async fn ip_blocking() {
     let client_2 = endpoint_factory.endpoint();
     let server = endpoint_factory.endpoint();
     let server_addr = server.local_addr().unwrap();
-    let server_task = tokio::spawn(async move {
+    let server_task = smol::spawn(async move {
         loop {
             let accepting = server.accept().await.unwrap();
             if accepting.remote_address() == client_1_addr {
@@ -236,7 +231,7 @@ async fn ip_blocking() {
             }
         }
     });
-    tokio::join!(
+    futures::join!(
         async move {
             let e = client_1
                 .connect(server_addr, "localhost")
@@ -256,7 +251,8 @@ async fn ip_blocking() {
                 .expect("connect");
         }
     );
-    server_task.abort();
+    drop(server_task);
+}
 }
 
 /// Construct an endpoint suitable for connecting to itself
@@ -299,7 +295,7 @@ impl EndpointFactory {
             self.endpoint_config.clone(),
             Some(server_config),
             UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
-            Arc::new(TokioRuntime),
+            Arc::new(SmolRuntime),
         )
         .unwrap();
         let mut client_config = ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
@@ -310,7 +306,7 @@ impl EndpointFactory {
     }
 }
 
-#[tokio::test]
+test! {
 async fn zero_rtt() {
     let _guard = subscribe();
     let endpoint = endpoint();
@@ -318,17 +314,18 @@ async fn zero_rtt() {
     const MSG0: &[u8] = b"zero";
     const MSG1: &[u8] = b"one";
     let endpoint2 = endpoint.clone();
-    tokio::spawn(async move {
+    smol::spawn(async move {
         for _ in 0..2 {
             let incoming = endpoint2.accept().await.unwrap().accept().unwrap();
             let (connection, established) = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
             let c = connection.clone();
-            tokio::spawn(async move {
+            smol::spawn(async move {
                 while let Ok(mut x) = c.accept_uni().await {
                     let msg = x.read_to_end(usize::MAX).await.unwrap();
                     assert_eq!(msg, MSG0);
                 }
-            });
+            })
+            .detach();
             info!("sending 0.5-RTT");
             let mut s = connection.open_uni().await.expect("open_uni");
             s.write_all(MSG0).await.expect("write");
@@ -340,7 +337,8 @@ async fn zero_rtt() {
             // The peer might close the connection before ACKing
             let _ = s.finish();
         }
-    });
+    })
+    .detach();
 
     let connection = endpoint
         .connect(endpoint.local_addr().unwrap(), "localhost")
@@ -372,12 +370,13 @@ async fn zero_rtt() {
         .unwrap_or_else(|_| panic!("missing 0-RTT keys"));
     // Send something ASAP to use 0-RTT
     let c = connection.clone();
-    tokio::spawn(async move {
+    smol::spawn(async move {
         let mut s = c.open_uni().await.expect("0-RTT open uni");
         info!("sending 0-RTT");
         s.write_all(MSG0).await.expect("0-RTT write");
         s.finish().unwrap();
-    });
+    })
+    .detach();
 
     let mut stream = connection.accept_uni().await.expect("incoming streams");
     let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
@@ -387,6 +386,7 @@ async fn zero_rtt() {
     drop((stream, connection));
 
     endpoint.wait_idle().await;
+}
 }
 
 #[test]
@@ -477,7 +477,6 @@ fn stress_both_windows() {
 
 fn run_echo(args: EchoArgs) {
     let _guard = subscribe();
-    let runtime = rt_basic();
     let handle = {
         // Use small receive windows
         let mut transport_config = TransportConfig::default();
@@ -503,13 +502,12 @@ fn run_echo(args: EchoArgs) {
         let server_sock = UdpSocket::bind(args.server_addr).unwrap();
         let server_addr = server_sock.local_addr().unwrap();
         let server = {
-            let _guard = runtime.enter();
             let _guard = error_span!("server").entered();
             Endpoint::new(
                 Default::default(),
                 Some(server_config),
                 server_sock,
-                Arc::new(TokioRuntime),
+                Arc::new(SmolRuntime),
             )
             .unwrap()
         };
@@ -525,7 +523,6 @@ fn run_echo(args: EchoArgs) {
         client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
 
         let client = {
-            let _guard = runtime.enter();
             let _guard = error_span!("client").entered();
             Endpoint::client(args.client_addr).unwrap()
         };
@@ -534,7 +531,7 @@ fn run_echo(args: EchoArgs) {
         client_config.transport_config(transport_config);
         client.set_default_client_config(client_config);
 
-        let handle = runtime.spawn(async move {
+        let handle = smol::spawn(async move {
             let incoming = server.accept().await.unwrap();
 
             // Note for anyone modifying the platform support in this test:
@@ -556,16 +553,17 @@ fn run_echo(args: EchoArgs) {
             }
 
             let new_conn = incoming.await.unwrap();
-            tokio::spawn(async move {
+            smol::spawn(async move {
                 while let Ok(stream) = new_conn.accept_bi().await {
-                    tokio::spawn(echo(stream));
+                    smol::spawn(echo(stream)).detach();
                 }
-            });
+            })
+            .detach();
             server.wait_idle().await;
         });
 
         info!("connecting from {} to {}", args.client_addr, server_addr);
-        runtime.block_on(
+        smol::block_on(
             async move {
                 let new_conn = client
                     .connect(server_addr, "localhost")
@@ -587,7 +585,7 @@ fn run_echo(args: EchoArgs) {
                     };
                     let recv_task = async { recv.read_to_end(usize::MAX).await.expect("read") };
 
-                    let (_, data) = tokio::join!(send_task, recv_task);
+                    let (_, data) = futures::join!(send_task, recv_task);
 
                     assert_eq!(data[..], msg[..], "Data mismatch");
                 }
@@ -598,7 +596,7 @@ fn run_echo(args: EchoArgs) {
         );
         handle
     };
-    runtime.block_on(handle).unwrap();
+    smol::block_on(handle);
 }
 
 struct EchoArgs {
@@ -668,15 +666,7 @@ impl std::io::Write for TestWriter {
     }
 }
 
-fn rt_basic() -> Runtime {
-    Builder::new_current_thread().enable_all().build().unwrap()
-}
-
-fn rt_threaded() -> Runtime {
-    Builder::new_multi_thread().enable_all().build().unwrap()
-}
-
-#[tokio::test]
+test! {
 async fn rebind_recv() {
     let _guard = subscribe();
 
@@ -710,11 +700,12 @@ async fn rebind_recv() {
 
     const MSG: &[u8; 5] = b"hello";
 
-    let write_send = Arc::new(tokio::sync::Notify::new());
+    let write_send = Arc::new(crate::runtime::sync::Notify::new());
     let write_recv = write_send.clone();
-    let connected_send = Arc::new(tokio::sync::Notify::new());
+    let connected_send = Arc::new(crate::runtime::sync::Notify::new());
+
     let connected_recv = connected_send.clone();
-    let server = tokio::spawn(async move {
+    let server = smol::spawn(async move {
         let connection = server.accept().await.unwrap().await.unwrap();
         info!("got conn");
         connected_send.notify_one();
@@ -743,17 +734,18 @@ async fn rebind_recv() {
     write_send.notify_one();
     let mut stream = connection.accept_uni().await.unwrap();
     assert_eq!(stream.read_to_end(MSG.len()).await.unwrap(), MSG);
-    server.await.unwrap();
+    server.await;
+}
 }
 
-#[tokio::test]
+test! {
 async fn stream_id_flow_control() {
     let _guard = subscribe();
     let mut cfg = TransportConfig::default();
     cfg.max_concurrent_uni_streams(1u32.into());
     let endpoint = endpoint_with_config(cfg);
 
-    let (client, server) = tokio::join!(
+    let (client, server) = futures::join!(
         endpoint
             .connect(endpoint.local_addr().unwrap(), "localhost")
             .unwrap(),
@@ -763,7 +755,7 @@ async fn stream_id_flow_control() {
     let server = server.unwrap();
 
     // If `open_uni` doesn't get unblocked when the previous stream is dropped, this will time out.
-    tokio::join!(
+    futures::join!(
         async {
             client.open_uni().await.unwrap();
         },
@@ -779,13 +771,14 @@ async fn stream_id_flow_control() {
         }
     );
 }
+}
 
-#[tokio::test]
+test! {
 async fn two_datagram_readers() {
     let _guard = subscribe();
     let endpoint = endpoint();
 
-    let (client, server) = tokio::join!(
+    let (client, server) = futures::join!(
         endpoint
             .connect(endpoint.local_addr().unwrap(), "localhost")
             .unwrap(),
@@ -794,8 +787,8 @@ async fn two_datagram_readers() {
     let client = client.unwrap();
     let server = server.unwrap();
 
-    let done = tokio::sync::Notify::new();
-    let (a, b, ()) = tokio::join!(
+    let done = crate::runtime::sync::Notify::new();
+    let (a, b, ()) = futures::join!(
         async {
             let x = client.read_datagram().await.unwrap();
             done.notify_waiters();
@@ -815,8 +808,9 @@ async fn two_datagram_readers() {
     assert!(*a == *b"one" || *b == *b"one");
     assert!(*a == *b"two" || *b == *b"two");
 }
+}
 
-#[tokio::test]
+test! {
 async fn multiple_conns_with_zero_length_cids() {
     let _guard = subscribe();
     let mut factory = EndpointFactory::new();
@@ -864,10 +858,11 @@ async fn multiple_conns_with_zero_length_cids() {
         client2.close(42u32.into(), &[]);
     }
     .instrument(error_span!("server"));
-    tokio::join!(client1, client2, server);
+    futures::join!(client1, client2, server);
+}
 }
 
-#[tokio::test]
+test! {
 async fn stream_stopped() {
     let _guard = subscribe();
     let factory = EndpointFactory::new();
@@ -895,10 +890,10 @@ async fn stream_stopped() {
 
         stream.write_all(b"hi").await.unwrap();
         // spawn one of the futures into a task
-        let stopped1 = tokio::task::spawn(stopped1);
+        let stopped1 = smol::spawn(stopped1);
         // verify that both futures resolved
-        let (stopped1, stopped2) = tokio::join!(stopped1, stopped2);
-        assert!(matches!(stopped1, Ok(Ok(Some(val))) if val == 42u32.into()));
+        let (stopped1, stopped2) = futures::join!(stopped1, stopped2);
+        assert!(matches!(stopped1, Ok(Some(val)) if val == 42u32.into()));
         assert!(matches!(stopped2, Ok(Some(val)) if val == 42u32.into()));
         // drop the stream
         drop(stream);
@@ -916,32 +911,33 @@ async fn stream_stopped() {
         conn
     }
     .instrument(error_span!("server"));
-    let (client, conn) = tokio::join!(client, server);
+    let (client, conn) = futures::join!(client, server);
     client.expect("timeout");
     drop(conn);
 }
+}
 
-#[tokio::test]
+test! {
 async fn stream_stopped_2() {
     let _guard = subscribe();
     let endpoint = endpoint();
 
-    let (conn, _server_conn) = tokio::try_join!(
+    let (conn, _server_conn) = futures::try_join!(
         endpoint
             .connect(endpoint.local_addr().unwrap(), "localhost")
             .unwrap(),
         async { endpoint.accept().await.unwrap().await }
     )
     .unwrap();
+
     let send_stream = conn.open_uni().await.unwrap();
     let stopped = timeout(Duration::from_millis(100), send_stream.stopped())
         .instrument(error_span!("stopped"));
-    tokio::pin!(stopped);
+    let mut stopped = pin!(stopped);
     // poll the future once so that the waker is registered.
-    tokio::select! {
-        biased;
-        _x = &mut stopped => {},
-        _x = std::future::ready(()) => {}
+    futures::select! {
+        _x = stopped.as_mut().fuse() => {},
+        _x = std::future::ready(()).fuse() => {},
     }
     // drop the send stream
     drop(send_stream);
@@ -949,8 +945,9 @@ async fn stream_stopped_2() {
     let res = stopped.await;
     assert_eq!(res, Ok(Ok(None)));
 }
+}
 
-#[tokio::test]
+test! {
 async fn stream_drop_removes_blocked_reader() {
     let _guard = subscribe();
 
@@ -960,7 +957,7 @@ async fn stream_drop_removes_blocked_reader() {
         let server_address = server.local_addr().unwrap();
         let client = endpoint_factory.endpoint();
 
-        let server_task = tokio::spawn(async move {
+        let server_task = smol::spawn(async move {
             let conn = server.accept().await.unwrap().await.unwrap();
             let mut stream = conn.accept_uni().await.unwrap();
 
@@ -974,7 +971,7 @@ async fn stream_drop_removes_blocked_reader() {
             {
                 let mut buf = [0u8; 64];
                 let read_fut = stream.read(&mut buf);
-                tokio::pin!(read_fut);
+                let mut read_fut = pin!(read_fut);
                 assert!(matches!(read_fut.as_mut().poll(&mut cx), Poll::Pending));
             }
 
@@ -1003,8 +1000,9 @@ async fn stream_drop_removes_blocked_reader() {
         // need to send some data to actually start the stream
         stream.write_all(b"hello").await.unwrap();
 
-        server_task.await.unwrap();
+        server_task.await;
     }
+}
 }
 
 #[derive(Default)]

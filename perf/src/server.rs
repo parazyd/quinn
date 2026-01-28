@@ -1,9 +1,12 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
+use quinn_smol as quinn;
+
 use anyhow::{Context, Result};
+use async_io::Timer;
 use bytes::Bytes;
 use clap::Parser;
-use quinn::{TokioRuntime, crypto::rustls::QuicServerConfig};
+use quinn::{SmolRuntime, crypto::rustls::QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, pem::PemObject};
 use tracing::{debug, error, info};
 
@@ -79,7 +82,7 @@ pub async fn run(opt: Opt) -> Result<()> {
     let mut endpoint_cfg = quinn::EndpointConfig::default();
     endpoint_cfg.max_udp_payload_size(opt.common.max_udp_payload_size)?;
 
-    let endpoint = quinn::Endpoint::new(endpoint_cfg, Some(config), socket, Arc::new(TokioRuntime))
+    let endpoint = quinn::Endpoint::new(endpoint_cfg, Some(config), socket, Arc::new(SmolRuntime))
         .context("creating endpoint")?;
 
     info!("listening on {}", endpoint.local_addr().unwrap());
@@ -88,11 +91,12 @@ pub async fn run(opt: Opt) -> Result<()> {
 
     while let Some(handshake) = endpoint.accept().await {
         let opt = opt.clone();
-        tokio::spawn(async move {
+        smol::spawn(async move {
             if let Err(e) = handle(handshake, opt).await {
                 error!("connection lost: {:#}", e);
             }
-        });
+        })
+        .detach();
     }
 
     Ok(())
@@ -102,7 +106,7 @@ async fn handle(handshake: quinn::Incoming, opt: Arc<Opt>) -> Result<()> {
     let connection = handshake.await.context("handshake failed")?;
 
     debug!("{} connected", connection.remote_address());
-    tokio::try_join!(
+    futures::try_join!(
         drive_uni(connection.clone()),
         drive_bi(connection.clone()),
         conn_stats(connection, opt)
@@ -113,7 +117,7 @@ async fn handle(handshake: quinn::Incoming, opt: Arc<Opt>) -> Result<()> {
 async fn conn_stats(connection: quinn::Connection, opt: Arc<Opt>) -> Result<()> {
     if opt.common.conn_stats {
         loop {
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            Timer::after(Duration::from_secs(2)).await;
             println!("{:?}\n", connection.stats());
         }
     }
@@ -124,11 +128,12 @@ async fn conn_stats(connection: quinn::Connection, opt: Arc<Opt>) -> Result<()> 
 async fn drive_uni(connection: quinn::Connection) -> Result<()> {
     while let Ok(stream) = connection.accept_uni().await {
         let connection = connection.clone();
-        tokio::spawn(async move {
+        smol::spawn(async move {
             if let Err(e) = handle_uni(connection, stream).await {
                 error!("request failed: {:#}", e);
             }
-        });
+        })
+        .detach();
     }
     Ok(())
 }
@@ -142,11 +147,12 @@ async fn handle_uni(connection: quinn::Connection, stream: quinn::RecvStream) ->
 
 async fn drive_bi(connection: quinn::Connection) -> Result<()> {
     while let Ok((send, recv)) = connection.accept_bi().await {
-        tokio::spawn(async move {
+        smol::spawn(async move {
             if let Err(e) = handle_bi(send, recv).await {
                 error!("request failed: {:#}", e);
             }
-        });
+        })
+        .detach();
     }
     Ok(())
 }

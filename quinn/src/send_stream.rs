@@ -331,24 +331,6 @@ impl futures_io::AsyncWrite for SendStream {
     }
 }
 
-impl tokio::io::AsyncWrite for SendStream {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        self.poll_write(cx, buf).map_err(Into::into)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(self.get_mut().finish().map_err(Into::into))
-    }
-}
-
 impl Drop for SendStream {
     fn drop(&mut self) {
         let mut conn = self.conn.state.lock("SendStream::drop");

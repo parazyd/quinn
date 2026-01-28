@@ -2,6 +2,8 @@
 //!
 //! Checkout the `README.md` for guidance.
 
+use quinn_smol as quinn;
+
 use std::{
     error::Error,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -11,17 +13,19 @@ use std::{
 use proto::crypto::rustls::QuicClientConfig;
 use quinn::{ClientConfig, Endpoint};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use smol_macros::main;
 
 mod common;
 use common::make_server_endpoint;
 
-#[tokio::main]
+main! {
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     // server and client are running on the same thread asynchronously
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
-    tokio::spawn(run_server(addr));
+    smol::spawn(run_server(addr)).detach();
     run_client(addr).await?;
     Ok(())
+}
 }
 
 /// Runs a QUIC server bound to given address.

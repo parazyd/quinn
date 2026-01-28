@@ -16,14 +16,14 @@ use bytes::Bytes;
 use pin_project_lite::pin_project;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
-use tokio::sync::{Notify, futures::Notified, mpsc, oneshot};
 use tracing::{Instrument, Span, debug_span};
 
 use crate::{
     ConnectionEvent, Duration, Instant, VarInt,
     mutex::Mutex,
     recv_stream::RecvStream,
-    runtime::{AsyncTimer, Runtime, UdpSender},
+    runtime::sync::{Notified, Notify},
+    runtime::{AsyncTimer, Runtime, UdpSender, mpsc, oneshot},
     send_stream::SendStream,
     udp_transmit,
 };
@@ -1190,7 +1190,7 @@ impl State {
         match self.inner.poll_timeout() {
             Some(deadline) => {
                 if let Some(delay) = &mut self.timer {
-                    // There is no need to reset the tokio timer if the deadline
+                    // There is no need to reset the timer if the deadline
                     // did not change
                     if self
                         .timer_deadline

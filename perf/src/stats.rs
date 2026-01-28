@@ -1,3 +1,5 @@
+use quinn_smol as quinn;
+
 use hdrhistogram::Histogram;
 use quinn::StreamId;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -247,7 +249,7 @@ fn throughput_bytes_per_second(duration_in_micros: u64, size: u64) -> f64 {
 mod json {
     use crate::stats;
     use crate::stats::{Stats, StreamIntervalStats};
-    use quinn::StreamId;
+    use quinn_smol::StreamId;
     use serde::{self, Serialize, Serializer, ser::SerializeStruct};
     use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
