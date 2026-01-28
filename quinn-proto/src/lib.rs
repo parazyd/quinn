@@ -5,7 +5,7 @@
 //! users may want to use the futures-based quinn API instead.
 //!
 //! The quinn-proto API might be of interest if you want to use it from a C or C++ project
-//! through C bindings or if you want to use a different event loop than the one tokio provides.
+//! through C bindings.
 //!
 //! The most important types are `Endpoint`, which conceptually represents the protocol state for
 //! a single socket and mostly manages configuration and dispatches incoming datagrams to the
