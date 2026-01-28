@@ -6,8 +6,8 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.80.0"
 edition = "2021"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/quinn-rs/quinn"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/parazyd/quinn"
 keywords = ["quic"]
 categories = ["network-programming", "asynchronous"]
 

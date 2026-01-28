@@ -1,19 +1,17 @@
-<h1 align="center"><img width="500" src="https://raw.githubusercontent.com/quinn-rs/quinn/51a3cea225670757cb844a342428e4e1341d9f13/docs/thumbnail.svg" /></h1>
+<h1 align="center"><img width="500" src="https://raw.githubusercontent.com/parazyd/quinn/51a3cea225670757cb844a342428e4e1341d9f13/docs/thumbnail.svg" /></h1>
 
 [![Documentation](https://docs.rs/quinn/badge.svg)](https://docs.rs/quinn/)
 [![Crates.io](https://img.shields.io/crates/v/quinn.svg)](https://crates.io/crates/quinn)
-[![Build status](https://github.com/quinn-rs/quinn/workflows/CI/badge.svg)](https://github.com/djc/quinn/actions?query=workflow%3ACI)
-[![codecov](https://codecov.io/gh/quinn-rs/quinn/branch/main/graph/badge.svg)](https://codecov.io/gh/quinn-rs/quinn)
-[![Chat](https://img.shields.io/badge/chat-%23quinn:matrix.org-%2346BC99?logo=matrix)](https://matrix.to/#/#quinn:matrix.org)
-[![Chat](https://img.shields.io/discord/976380008299917365?logo=discord)](https://discord.gg/SGPEcDfVzh)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
+[![Build status](https://github.com/parazyd/quinn/workflows/CI/badge.svg)](https://github.com/parazyd/quinn/actions?query=workflow%3ACI)
+[![License: AGPL 3.0](https://img.shields.io/badge/License-AGPL3-blue.svg)](LICENSE-AGPL3)
 
 Quinn is a pure-Rust, async-compatible implementation of the IETF [QUIC][quic] transport protocol.
 The project was founded by [Dirkjan Ochtman](https://github.com/djc) and
 [Benjamin Saunders](https://github.com/Ralith) as a side project in 2018, and has seen more than
-30 releases since then. If you're using Quinn in a commercial setting, please consider
-[sponsoring](https://opencollective.com/quinn-rs) the project.
+30 releases since then.
+
+This repository is a fork that removes Tokio support and defaults to the
+[smol](https://github.com/smol-rs/smol) async runtime.
 
 ## Features
 
