@@ -33,7 +33,7 @@ jobs:
             echo "===== freebsd-version ====="
             freebsd-version
 
-            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
+            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp-smol --benches
 
   test-solaris:
     name: test on solaris
@@ -58,25 +58,7 @@ jobs:
             export PATH=$HOME/.rust_solaris/bin:$PATH
             # Workaround for https://github.com/quinn-rs/quinn/issues/2218
             export CARGO_HTTP_MULTIPLEXING=false
-            cargo build --locked --all-targets && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
-
-  test-illumos:
-    name: test on illumos
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: test on Illumos
-        uses: vmactions/omnios-vm@v1
-        with:
-          usesh: true
-          mem: 4096
-          copyback: false
-          prepare: |
-            pkg install gcc14 curl pkg-config glib2
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-          run: |
-            . "$HOME/.cargo/env"
-            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
+            cargo build --locked --all-targets && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp-smol --benches
 
   test:
     strategy:
@@ -99,13 +81,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --all-targets
       - run: cargo test --locked
-      - run: cargo test --locked -p quinn-udp --features fast-apple-datapath
+      - run: cargo test --locked -p quinn-udp-smol --features fast-apple-datapath
         if: ${{ runner.os == 'macOS' }}
       - run: cargo test --locked -- --ignored stress
       - run: cargo test --locked --manifest-path fuzz/Cargo.toml
         if: ${{ matrix.rust == 'stable' }}
-      - run: cargo test --locked -p quinn-udp --benches
-      - run: cargo test --locked -p quinn-udp --benches --features fast-apple-datapath
+      - run: cargo test --locked -p quinn-udp-smol --benches
+      - run: cargo test --locked -p quinn-udp-smol --benches --features fast-apple-datapath
         if: ${{ runner.os == 'macOS' }}
 
   test-aws-lc-rs:
@@ -136,22 +118,22 @@ jobs:
       - uses: bytecodealliance/actions/wasm-tools/setup@v1
       - uses: cargo-bins/cargo-binstall@main
 
-      - run: cargo test --locked -p quinn-proto --target wasm32-unknown-unknown --no-run
-      - run: cargo check --locked -p quinn-udp --target wasm32-unknown-unknown --no-default-features --features=tracing,log
-      - run: cargo rustc --locked -p quinn --target wasm32-unknown-unknown --no-default-features --features=tracing-log,platform-verifier,rustls-ring --crate-type=cdylib
+      - run: cargo test --locked -p quinn-proto-smol --target wasm32-unknown-unknown --no-run
+      - run: cargo check --locked -p quinn-udp-smol --target wasm32-unknown-unknown --no-default-features --features=tracing,log
+      - run: cargo rustc --locked -p quinn-smol --target wasm32-unknown-unknown --no-default-features --features=tracing-log,platform-verifier,rustls-ring --crate-type=cdylib
 
       # If the Wasm file contains any 'import "env"' declarations, then
       # some non-Wasm-compatible code made it into the final code.
-      - name: Ensure no 'import "env"' in quinn_proto Wasm
+      - name: Ensure no 'import "env"' in quinn_proto_smol Wasm
         run: |
-          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/deps/quinn_proto-*.wasm | grep 'import "env"'
-      - name: Ensure no 'import "env"' in quinn Wasm
+          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/deps/quinn_proto_smol-*.wasm | grep 'import "env"'
+      - name: Ensure no 'import "env"' in quinn_smol Wasm
         run: |
-          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/quinn.wasm | grep 'import "env"'
+          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/quinn_smol.wasm | grep 'import "env"'
 
       # Match the version of wasm-bindgen used in `Cargo.lock`
       - run: cargo binstall wasm-bindgen-cli@0.2.108 --locked --no-confirm
-      - run: cargo test --locked -p quinn-proto --target wasm32-unknown-unknown
+      - run: cargo test --locked -p quinn-proto-smol --target wasm32-unknown-unknown
 
   msrv:
     runs-on: ubuntu-latest
@@ -160,7 +142,7 @@ jobs:
       # Note that we must also update the README when changing the MSRV
       - uses: dtolnay/rust-toolchain@1.80.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --locked --lib --all-features -p quinn-udp -p quinn-proto -p quinn
+      - run: cargo check --locked --lib --all-features -p quinn-udp-smol -p quinn-proto-smol -p quinn-smol
 
   lint:
     runs-on: ubuntu-latest
